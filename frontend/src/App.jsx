@@ -5,10 +5,9 @@ import Hospitals from "./pages/Hospitals";
 import Login from "./pages/Login";
 import Admin from "./pages/Admin";
 
-// Navigation Component: డాక్టర్ పేజీల్లో navbar ని దాచడానికి
+// Navigation Component
 function Navigation({ user, handleLogout }) {
   const location = useLocation();
-  // Doctor Dashboard లో ఉన్నప్పుడు పైన లింకులు కనిపించవు
   const isDoctorPage = location.pathname.startsWith("/doctor");
 
   if (isDoctorPage) return null;
@@ -27,84 +26,84 @@ function Navigation({ user, handleLogout }) {
             Doctor Login
           </Link>
         ) : (
-          <button onClick={handleLogout} style={{ background: "none", border: "1px solid #ef4444", color: "#ef4444", padding: "4px 10px", borderRadius: "6px", cursor: "pointer", fontSize: "14px" }}>
-            Logout
+          <button onClick={handleLogout} style={{ background: "none", border: "1px solid #ef4444", color: "#ef4444", padding: "4px 10px", borderRadius: "6px", cursor: "pointer", fontSize: "14px", fontWeight: "bold" }}>
+            Logout (నిష్క్రమించు)
           </button>
         )}
       </div>
-      <p style={{ margin: 0, color: "#94a3b8", fontSize: "11px" }}>Narsapur Digital Healthcare Initiative</p>
     </nav>
   );
 }
-
-// Protected Route Wrapper: Vercel లో Login ఇబ్బంది లేకుండా ఉండటానికి
-const ProtectedRoute = ({ user, loading, children }) => {
-  if (loading) return <div style={{ textAlign: "center", marginTop: "100px" }}>🛡️ Securing Connection...</div>;
-  if (!user) return <Navigate to="/login" replace />;
-  return children;
-};
 
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // 1. సెషన్ ఉందో లేదో చెక్ చెయ్యి
-    const checkSession = async () => {
+    // 1. App లోడ్ అవ్వగానే పాత సెషన్ ఉందో లేదో చూడు
+    const getInitialSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       setUser(session?.user ?? null);
       setLoading(false);
     };
 
-    checkSession();
+    getInitialSession();
 
-    // 2. Auth స్టేటస్ మారినప్పుడు (Login/Logout) ఆటోమేటిక్ గా అప్డేట్ చెయ్యి
+    // 2. లాగిన్ లేదా లాగౌట్ జరిగినప్పుడు వెంటనే యూజర్ స్టేట్ మార్చు
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
       setLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      subscription?.unsubscribe();
+    };
   }, []);
 
   const handleLogout = async () => {
-    await supabase.signOut();
-    setUser(null);
-    window.location.href = "/login"; // Logout అయ్యాక క్లీన్ గా రీడైరెక్ట్ అవ్వడానికి
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      console.error("Error logging out:", error.message);
+    } else {
+      setUser(null);
+      // Vercel లో క్లీన్ గా రీడైరెక్ట్ అవ్వడానికి ఇది బెస్ట్
+      window.location.href = "/login";
+    }
   };
+
+  // సెషన్ చెక్ చేసే వరకు ఖాళీ స్క్రీన్ లేదా లోడింగ్ చూపించు
+  if (loading) return (
+    <div style={{ textAlign: "center", marginTop: "100px", fontFamily: "sans-serif" }}>
+      <h2>🛡️ సెక్యూర్డ్ కనెక్షన్...</h2>
+      <p>వెయిట్ చెయ్యి మామా, లోడ్ అవుతోంది!</p>
+    </div>
+  );
 
   return (
     <Router>
-      <div style={{ fontFamily: "'Inter', sans-serif", minHeight: "100vh", backgroundColor: "#f8fafc", color: "#1e293b" }}>
+      <div style={{ fontFamily: "'Inter', sans-serif", minHeight: "100vh", backgroundColor: "#f8fafc" }}>
         
         <Navigation user={user} handleLogout={handleLogout} />
 
         <div style={{ padding: "10px", maxWidth: "800px", margin: "0 auto" }}>
           <Routes>
-            {/* పేషెంట్లకు కనిపించే మెయిన్ పేజీ */}
             <Route path="/" element={<Hospitals />} />
-
-            {/* లాగిన్ పేజీ: ఇప్పటికే లాగిన్ అయ్యుంటే అడ్మిన్ కి వెళ్తుంది */}
+            
+            {/* ఇప్పటికే లాగిన్ అయ్యుంటే మళ్ళీ లాగిన్ పేజీకి వెళ్ళకుండా డాష్‌బోర్డ్ కి పంపిస్తుంది */}
             <Route path="/login" element={!user ? <Login setUser={setUser} /> : <Navigate to="/doctor-admin" replace />} />
 
-            {/* డాక్టర్ డాష్‌బోర్డ్: ఇది Protected (లాగిన్ అయితేనే ఓపెన్ అవుతుంది) */}
+            {/* లాగిన్ అయితేనే అడ్మిన్ పేజీ కనిపిస్తుంది */}
             <Route 
               path="/doctor-admin" 
-              element={
-                <ProtectedRoute user={user} loading={loading}>
-                  <Admin user={user} />
-                </ProtectedRoute>
-              } 
+              element={user ? <Admin user={user} /> : <Navigate to="/login" replace />} 
             />
 
-            {/* 404: పేజీ దొరకకపోతే హోమ్ కి పంపిస్తుంది */}
-            <Route path="*" element={<div style={{ textAlign: "center", marginTop: "100px" }}><h2>404 - Not Found</h2><Link to="/">Go Home</Link></div>} />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>
 
-        <footer style={{ textAlign: "center", padding: "30px 10px", color: "#94a3b8", fontSize: "12px", marginTop: "40px", borderTop: "1px solid #e2e8f0" }}>
-          <p>© 2026 SETURA Systems - Narsapur</p>
-          <p style={{ fontWeight: "500" }}>Empowering Local Healthcare with Big Data</p>
+        <footer style={{ textAlign: "center", padding: "20px", color: "#94a3b8", fontSize: "12px" }}>
+          © 2026 SETURA Systems - Narsapur
         </footer>
       </div>
     </Router>
