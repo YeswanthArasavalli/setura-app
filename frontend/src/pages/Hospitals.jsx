@@ -4,241 +4,189 @@ import { supabase } from "../lib/supabaseClient";
 export default function Hospitals() {
   const [hospitals, setHospitals] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [isBooking, setIsBooking] = useState(null); 
-  const [message, setMessage] = useState(""); 
-  
-  // Patient Form States
-  const [userName, setUserName] = useState(""); 
-  const [phone, setPhone] = useState(""); 
+  const [isBooking, setIsBooking] = useState(null);
+  const [language, setLanguage] = useState("te");
+
+  // Form States
+  const [userName, setUserName] = useState("");
+  const [phone, setPhone] = useState("");
   const [age, setAge] = useState("");
   const [village, setVillage] = useState("");
   const [bloodGroup, setBloodGroup] = useState("");
   const [hasDiabetes, setHasDiabetes] = useState(false);
   const [hasBP, setHasBP] = useState(false);
 
-  // <-- Live Status Tracking States -->
+  // Booking States
   const [myToken, setMyToken] = useState(null);
-  const [bookedHospitalId, setBookedHospitalId] = useState(null);
+  const [selectedHospital, setSelectedHospital] = useState(null);
+  const [message, setMessage] = useState("");
 
-  const inputStyle = {
-    width: "100%", 
-    padding: "12px", 
-    borderRadius: "6px", 
-    border: "1px solid #ccc",
-    fontSize: "16px",
-    boxSizing: "border-box",
-    marginBottom: "12px"
+  const t = {
+    en: {
+      title: "SETURA Booking", regTitle: "Patient Details", name: "Name *", phone: "Phone *", age: "Age", 
+      village: "Village", blood: "Blood Group", diabetes: "Diabetes", bp: "BP", book: "Book Token", 
+      serving: "Now Serving", success: "Token booked!", error: "Name & Phone required", 
+      yourToken: "Your Token", wa: "Send via WhatsApp ✅", waPreview: "Message Preview:"
+    },
+    te: {
+      title: "సేతుర బుకింగ్", regTitle: "పేషెంట్ వివరాలు", name: "పేరు *", phone: "ఫోన్ *", age: "వయస్సు", 
+      village: "ఊరు", blood: "బ్లడ్ గ్రూప్", diabetes: "షుగర్", bp: "బీపీ", book: "టోకెన్ బుక్ చేయండి", 
+      serving: "ప్రస్తుతం", success: "టోకెన్ బుక్ అయింది!", error: "పేరు & ఫోన్ అవసరం", 
+      yourToken: "మీ టోకెన్", wa: "వాట్సాప్ పంపండి ✅", waPreview: "మెసేజ్ ప్రివ్యూ:"
+    },
+    hi: {
+      title: "सेतुरा बुकिंग", regTitle: "मरीज का विवरण", name: "नाम *", phone: "फोन *", age: "उम्र", 
+      village: "गांव", blood: "ब्लड ग्रुप", diabetes: "शुगर", bp: "बीपी", book: "टोकन बुक करें", 
+      serving: "अभी चल रहा", success: "टोकन बुक हो गया!", error: "नाम और फोन जरूरी", 
+      yourToken: "आपका टोकन", wa: "व्हाट्सएप भेजें ✅", waPreview: "संदेश पूर्वावलोकन:"
+    }
   };
 
   useEffect(() => {
     fetchHospitals();
+    const subscription = supabase
+      .channel("live-tokens")
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "hospitals" }, () => fetchHospitals())
+      .subscribe();
+    return () => supabase.removeChannel(subscription);
   }, []);
 
   async function fetchHospitals() {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from("hospitals")
-      .select("*")
-      .order("id", { ascending: true }); // Keeps the list order stable
-
-    if (error) {
-      console.error("Error fetching hospitals:", error);
-      setMessage("❌ Failed to load hospitals. Please check your internet.");
-    } else {
-      setHospitals(data || []);
-    }
+    const { data, error } = await supabase.from("hospitals").select("*").order("name");
+    if (error) console.error("Fetch Error:", error);
+    setHospitals(data || []);
     setLoading(false);
   }
 
-  async function bookToken(hospitalId) {
-    setMessage(""); 
-
-    if (!userName.trim()) {
-      setMessage("❌ Please enter patient name before booking.");
+  async function bookToken(h) {
+    // Validation
+    if (!userName.trim() || !phone.trim()) {
+      setMessage(`❌ ${t[language].error}`);
       return;
     }
 
-    const phoneRegex = /^[6-9]\d{9}$/;
-    if (!phoneRegex.test(phone.trim())) {
-      setMessage("❌ Please enter a valid 10-digit Indian phone number.");
-      return;
-    }
+    setIsBooking(h.id);
+    setMessage("");
 
-    if (age && isNaN(age)) {
-      setMessage("❌ Age must be a valid number.");
-      return;
-    }
+    try {
+      // 1. Get next token number
+      const { data: lastBooking, error: fetchError } = await supabase
+        .from("bookings")
+        .select("token_number")
+        .eq("hospital_id", h.id)
+        .order("token_number", { ascending: false })
+        .limit(1);
 
-    setIsBooking(hospitalId); 
+      if (fetchError) throw fetchError;
 
-    const { count, error: countError } = await supabase
-      .from("bookings")
-      .select("*", { count: "exact", head: true })
-      .eq("hospital_id", hospitalId);
+      const nextToken = lastBooking?.length ? lastBooking[0].token_number + 1 : 1;
 
-    if (countError) {
-      console.error("Error fetching count:", countError);
-      setMessage("❌ Error generating token number. Please try again.");
-      setIsBooking(null);
-      return;
-    }
+      // 2. Insert new booking
+      const { error: insertError } = await supabase.from("bookings").insert([{
+        user_name: userName.trim(),
+        phone_number: phone.trim(),
+        age: age ? parseInt(age) : null,
+        village: village.trim() || "Narsapur",
+        blood_group: bloodGroup.trim() || "N/A",
+        has_diabetes: hasDiabetes,
+        has_bp: hasBP,
+        hospital_id: h.id,
+        token_number: nextToken
+      }]);
 
-    const tokenNumber = (count || 0) + 1;
+      if (insertError) throw insertError;
 
-    const { error } = await supabase
-      .from("bookings")
-      .insert([
-        {
-          user_name: userName.trim(),
-          phone_number: phone.trim(),
-          age: age ? parseInt(age) : null,
-          village: village.trim(),
-          blood_group: bloodGroup.trim(),
-          has_diabetes: hasDiabetes,
-          has_bp: hasBP,
-          hospital_id: hospitalId,
-          token_number: tokenNumber
-        }
-      ]);
-
-    if (error) {
-      console.error(error);
-      setMessage("❌ Error booking token. Please try again.");
-    } else {
-      setMessage(`✅ Token booked successfully!`);
-      
-      // <-- Save token and hospital ID for the live tracker -->
-      setMyToken(tokenNumber);
-      setBookedHospitalId(hospitalId);
-      
-      // Clear form inputs
-      setUserName(""); 
-      setPhone(""); 
-      setAge("");
-      setVillage("");
-      setBloodGroup("");
-      setHasDiabetes(false);
-      setHasBP(false);
-
-      // Fetch hospitals again instantly so the new token counts are synced
+      // Success
+      setMyToken(nextToken);
+      setSelectedHospital(h);
+      setMessage(`✅ ${t[language].success} #${nextToken}`);
       fetchHospitals();
+
+    } catch (err) {
+      console.error("Booking detailed error:", err);
+      setMessage(`❌ Error: ${err.message || "Could not book token"}`);
+    } finally {
+      setIsBooking(null);
     }
-    
-    setIsBooking(null); 
   }
 
+  const getWAMessage = () => {
+    if (!selectedHospital) return "";
+    const header = language === "te" ? "🎯 సేతుర టోకెన్" : "🎯 SETURA TOKEN";
+    const msg = `${header}\n------------------\nHospital: ${selectedHospital.name}\nToken: #${myToken}\nPatient: ${userName}\n------------------`;
+    return encodeURIComponent(msg);
+  };
+
+  const inputStyle = {
+    width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #d1d5db",
+    fontSize: "16px", boxSizing: "border-box", marginBottom: "12px", outline: "none", color: "#000"
+  };
+
   return (
-    <div style={{ maxWidth: "500px", margin: "0 auto" }}>
-      <h2 style={{ textAlign: "center", marginBottom: "20px" }}>Patient Registration</h2>
-
-      {message && (
-        <div style={{
-          padding: "12px",
-          marginBottom: "20px",
-          borderRadius: "6px",
-          backgroundColor: message.includes("✅") ? "#dcfce7" : "#fee2e2",
-          color: message.includes("✅") ? "#166534" : "#991b1b",
-          border: `1px solid ${message.includes("✅") ? "#bbf7d0" : "#fecaca"}`,
-          textAlign: "center",
-          fontWeight: "bold"
-        }}>
-          {message}
-        </div>
-      )}
-
-      {/* Hide the form if they already booked a token to keep the screen clean */}
-      {!myToken && (
-        <div style={{ backgroundColor: "#f9fafb", padding: "16px", borderRadius: "8px", border: "1px solid #eee", marginBottom: "20px" }}>
-          <h3 style={{ marginTop: 0, marginBottom: "16px", fontSize: "16px", color: "#333" }}>
-            Fill Details (Optional info can be left blank)
-          </h3>
-          
-          <input type="text" placeholder="Patient Name (Required)" value={userName} onChange={(e) => setUserName(e.target.value)} style={inputStyle} />
-          <input type="tel" placeholder="Phone Number (Required)" value={phone} onChange={(e) => setPhone(e.target.value)} style={inputStyle} maxLength="10" />
-          
-          <div style={{ display: "flex", gap: "12px" }}>
-            <input type="text" placeholder="Age" value={age} onChange={(e) => setAge(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
-            <input type="text" placeholder="Blood Group (e.g., O+)" value={bloodGroup} onChange={(e) => setBloodGroup(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
-          </div>
-
-          <input type="text" placeholder="Village / Town" value={village} onChange={(e) => setVillage(e.target.value)} style={inputStyle} />
-
-          <div style={{ display: "flex", gap: "20px", padding: "10px", backgroundColor: "#fff", border: "1px solid #ccc", borderRadius: "6px" }}>
-            <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
-              <input type="checkbox" checked={hasDiabetes} onChange={(e) => setHasDiabetes(e.target.checked)} style={{ width: "18px", height: "18px" }} />
-              Diabetes
-            </label>
-            <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
-              <input type="checkbox" checked={hasBP} onChange={(e) => setHasBP(e.target.checked)} style={{ width: "18px", height: "18px" }} />
-              Blood Pressure
-            </label>
-          </div>
-        </div>
-      )}
-
-      {/* Refresh Button so patients can check if the queue moved */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", marginTop: "30px" }}>
-        <h2 style={{ margin: 0 }}>Select Hospital</h2>
-        <button 
-          onClick={fetchHospitals}
-          style={{ padding: "8px 12px", backgroundColor: "#eee", border: "1px solid #ccc", borderRadius: "6px", cursor: "pointer", fontWeight: "bold" }}
-        >
-          {loading ? "..." : "↻ Refresh Status"}
-        </button>
+    <div style={{ maxWidth: 500, margin: "20px auto", padding: "20px", fontFamily: "sans-serif", backgroundColor: "#fff", borderRadius: "12px", boxShadow: "0 4px 10px rgba(0,0,0,0.1)" }}>
+      
+      {/* Language Bar */}
+      <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginBottom: "15px" }}>
+        {["en", "te", "hi"].map(lang => (
+          <button key={lang} onClick={() => setLanguage(lang)} style={{ padding: "5px 12px", borderRadius: "20px", border: "1px solid #2563eb", backgroundColor: language === lang ? "#2563eb" : "#fff", color: language === lang ? "#fff" : "#2563eb", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}>
+            {lang.toUpperCase()}
+          </button>
+        ))}
       </div>
 
-      {loading && hospitals.length === 0 && <p style={{ textAlign: "center", color: "#666" }}>Loading hospitals...</p>}
-      {!loading && hospitals.length === 0 && <p style={{ textAlign: "center" }}>No hospitals found.</p>}
+      <h2 style={{ textAlign: "center", color: "#1e293b", fontSize: "24px", marginBottom: "20px" }}>{t[language].title}</h2>
 
-      {hospitals.map((hospital) => {
-        const currentToken = hospital.current_token || 0;
-        
-        return (
-          <div key={hospital.id} style={{ border: "1px solid #ddd", borderRadius: "8px", padding: "16px", marginBottom: "16px", backgroundColor: "#fff", boxShadow: "0 2px 4px rgba(0,0,0,0.05)" }}>
-            <h3 style={{ margin: "0 0 8px 0" }}>{hospital.name}</h3>
-            <p style={{ margin: "0 0 16px 0", color: "#666" }}>{hospital.location}</p>
+      {message && <div style={{ padding: "12px", borderRadius: "8px", marginBottom: "20px", backgroundColor: message.includes("✅") ? "#dcfce7" : "#fee2e2", color: message.includes("✅") ? "#166534" : "#991b1b", textAlign: "center", fontWeight: "bold" }}>{message}</div>}
 
-            <div style={{ backgroundColor: "#fef3c7", padding: "12px", borderRadius: "6px", marginBottom: "16px", textAlign: "center", border: "1px solid #fde68a" }}>
-              <span style={{ fontWeight: "bold", color: "#92400e", fontSize: "16px" }}>
-                📢 Now Serving: Token #{currentToken}
-              </span>
-            </div>
-            
-            {/* <-- Live Tracker UI is perfectly setup here --> */}
-            {bookedHospitalId === hospital.id && myToken ? (
-              <div style={{ padding: "16px", backgroundColor: "#e0f2fe", borderRadius: "8px", border: "1px solid #bae6fd", textAlign: "center" }}>
-                <h3 style={{ margin: "0 0 8px 0", color: "#0369a1", fontSize: "20px" }}>🎟️ Your Token: #{myToken}</h3>
-                
-                <div style={{ fontSize: "18px", marginTop: "12px" }}>
-                  {myToken <= currentToken && (
-                    <p style={{ margin: 0, fontWeight: "bold", color: "#166534" }}>👉 It's your turn! Please go inside.</p>
-                  )}
-                  {myToken === currentToken + 1 && (
-                    <p style={{ margin: 0, fontWeight: "bold", color: "#b45309" }}>⏳ Be ready, you are next!</p>
-                  )}
-                  {myToken > currentToken + 1 && (
-                    <p style={{ margin: 0, color: "#0369a1", fontWeight: "bold" }}>⌛ Please wait. ({myToken - currentToken - 1} people ahead of you)</p>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <button 
-                onClick={() => bookToken(hospital.id)}
-                disabled={isBooking === hospital.id || myToken !== null}
-                style={{
-                  width: "100%", padding: "12px",
-                  backgroundColor: (isBooking === hospital.id || myToken !== null) ? "#ccc" : "#000",
-                  color: "#fff", border: "none", borderRadius: "6px",
-                  cursor: (isBooking === hospital.id || myToken !== null) ? "not-allowed" : "pointer",
-                  fontWeight: "bold", fontSize: "16px"
-                }}
-              >
-                {isBooking === hospital.id ? "Booking..." : "Book Token"}
-              </button>
-            )}
+      {!myToken && (
+        <div style={{ backgroundColor: "#f8fafc", padding: "15px", borderRadius: "10px", marginBottom: "20px" }}>
+          <h4 style={{ marginTop: 0, color: "#475569" }}>{t[language].regTitle}</h4>
+          <input placeholder={t[language].name} value={userName} onChange={e => setUserName(e.target.value)} style={inputStyle} />
+          <input placeholder={t[language].phone} type="tel" maxLength="10" value={phone} onChange={e => setPhone(e.target.value)} style={inputStyle} />
+          <div style={{ display: "flex", gap: "10px" }}>
+            <input placeholder={t[language].age} type="number" value={age} onChange={e => setAge(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
+            <input placeholder={t[language].blood} value={bloodGroup} onChange={e => setBloodGroup(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
           </div>
-        );
-      })}
+          <input placeholder={t[language].village} value={village} onChange={e => setVillage(e.target.value)} style={inputStyle} />
+          
+          <div style={{ display: "flex", gap: "15px", padding: "5px" }}>
+            <label style={{ cursor: "pointer", fontSize: "14px", color: "#000" }}><input type="checkbox" checked={hasDiabetes} onChange={e => setHasDiabetes(e.target.checked)} /> {t[language].diabetes}</label>
+            <label style={{ cursor: "pointer", fontSize: "14px", color: "#000" }}><input type="checkbox" checked={hasBP} onChange={e => setHasBP(e.target.checked)} /> {t[language].bp}</label>
+          </div>
+        </div>
+      )}
+
+      <h3 style={{ color: "#1e293b", borderBottom: "2px solid #f1f5f9", paddingBottom: "10px" }}>{t[language].select}</h3>
+
+      {loading ? <p>Loading...</p> : hospitals.map(h => (
+        <div key={h.id} style={{ border: "1px solid #e2e8f0", borderRadius: "12px", padding: "15px", marginBottom: "15px", backgroundColor: "#fff" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h4 style={{ margin: 0, color: "#1e293b" }}>{h.name}</h4>
+            <div style={{ backgroundColor: "#fef3c7", padding: "5px 10px", borderRadius: "8px", textAlign: "center" }}>
+              <span style={{ fontSize: "10px", color: "#92400e", fontWeight: "bold", display: "block" }}>{t[language].serving}</span>
+              <span style={{ fontSize: "18px", fontWeight: "900", color: "#92400e" }}>#{h.current_token || 0}</span>
+            </div>
+          </div>
+
+          {myToken && selectedHospital?.id === h.id ? (
+            <div style={{ marginTop: "15px", padding: "15px", backgroundColor: "#eff6ff", borderRadius: "10px", textAlign: "center" }}>
+              <span style={{ color: "#1e40af", fontWeight: "bold" }}>{t[language].yourToken}</span>
+              <h1 style={{ margin: "5px 0", color: "#1e40af", fontSize: "42px" }}>#{myToken}</h1>
+              <a href={`https://wa.me/91${phone}?text=${getWAMessage()}`} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
+                <button style={{ width: "100%", marginTop: "12px", padding: "12px", backgroundColor: "#25D366", color: "#fff", border: "none", borderRadius: "8px", fontWeight: "bold", cursor: "pointer" }}>{t[language].wa}</button>
+              </a>
+            </div>
+          ) : (
+            <button 
+              onClick={() => bookToken(h)} 
+              disabled={isBooking !== null || myToken !== null}
+              style={{ width: "100%", marginTop: "12px", padding: "12px", backgroundColor: (isBooking || myToken) ? "#cbd5e1" : "#2563eb", color: "#fff", border: "none", borderRadius: "8px", fontWeight: "bold", cursor: "pointer" }}
+            >
+              {isBooking === h.id ? "Booking..." : t[language].book}
+            </button>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
