@@ -5,12 +5,12 @@ import Hospitals from "./pages/Hospitals";
 import Login from "./pages/Login";
 import Admin from "./pages/Admin";
 
-// Navigation Logic: UI neat ga undadaniki
+// Navigation Component: డాక్టర్ పేజీల్లో navbar ని దాచడానికి
 function Navigation({ user, handleLogout }) {
   const location = useLocation();
+  // Doctor Dashboard లో ఉన్నప్పుడు పైన లింకులు కనిపించవు
   const isDoctorPage = location.pathname.startsWith("/doctor");
 
-  // Doctor Dashboard lo unnappudu cleaner look kosam Navbar hide chestunnam
   if (isDoctorPage) return null;
 
   return (
@@ -37,31 +37,41 @@ function Navigation({ user, handleLogout }) {
   );
 }
 
+// Protected Route Wrapper: Vercel లో Login ఇబ్బంది లేకుండా ఉండటానికి
+const ProtectedRoute = ({ user, loading, children }) => {
+  if (loading) return <div style={{ textAlign: "center", marginTop: "100px" }}>🛡️ Securing Connection...</div>;
+  if (!user) return <Navigate to="/login" replace />;
+  return children;
+};
+
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // 1. Check current session on load
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    // 1. సెషన్ ఉందో లేదో చెక్ చెయ్యి
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
       setUser(session?.user ?? null);
       setLoading(false);
-    });
+    };
 
-    // 2. Listen for auth changes (login/logout)
+    checkSession();
+
+    // 2. Auth స్టేటస్ మారినప్పుడు (Login/Logout) ఆటోమేటిక్ గా అప్డేట్ చెయ్యి
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
+      setLoading(false);
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    await supabase.signOut();
     setUser(null);
+    window.location.href = "/login"; // Logout అయ్యాక క్లీన్ గా రీడైరెక్ట్ అవ్వడానికి
   };
-
-  if (loading) return <div style={{ textAlign: "center", marginTop: "50px" }}>Loading Setura...</div>;
 
   return (
     <Router>
@@ -71,24 +81,28 @@ function App() {
 
         <div style={{ padding: "10px", maxWidth: "800px", margin: "0 auto" }}>
           <Routes>
-            {/* Public: Patient View */}
+            {/* పేషెంట్లకు కనిపించే మెయిన్ పేజీ */}
             <Route path="/" element={<Hospitals />} />
 
-            {/* Public: Login Page (Redirect to dashboard if already logged in) */}
-            <Route path="/login" element={!user ? <Login setUser={setUser} /> : <Navigate to="/doctor-admin" />} />
+            {/* లాగిన్ పేజీ: ఇప్పటికే లాగిన్ అయ్యుంటే అడ్మిన్ కి వెళ్తుంది */}
+            <Route path="/login" element={!user ? <Login setUser={setUser} /> : <Navigate to="/doctor-admin" replace />} />
 
-            {/* Protected: Doctor Dashboard */}
+            {/* డాక్టర్ డాష్‌బోర్డ్: ఇది Protected (లాగిన్ అయితేనే ఓపెన్ అవుతుంది) */}
             <Route 
               path="/doctor-admin" 
-              element={user ? <Admin user={user} /> : <Navigate to="/login" />} 
+              element={
+                <ProtectedRoute user={user} loading={loading}>
+                  <Admin user={user} />
+                </ProtectedRoute>
+              } 
             />
 
-            {/* 404 Page */}
+            {/* 404: పేజీ దొరకకపోతే హోమ్ కి పంపిస్తుంది */}
             <Route path="*" element={<div style={{ textAlign: "center", marginTop: "100px" }}><h2>404 - Not Found</h2><Link to="/">Go Home</Link></div>} />
           </Routes>
         </div>
 
-        <footer style={{ textAlign: "center", padding: "30px 10px", color: "#94a3b8", fontSize: "12px", marginTop: "20px" }}>
+        <footer style={{ textAlign: "center", padding: "30px 10px", color: "#94a3b8", fontSize: "12px", marginTop: "40px", borderTop: "1px solid #e2e8f0" }}>
           <p>© 2026 SETURA Systems - Narsapur</p>
           <p style={{ fontWeight: "500" }}>Empowering Local Healthcare with Big Data</p>
         </footer>
