@@ -5,12 +5,12 @@ import Hospitals from "./pages/Hospitals";
 import Login from "./pages/Login";
 import Admin from "./pages/Admin";
 
-// Navigation Logic: UI neat ga undadaniki
+// Navigation Logic: UI ని ప్రొఫెషనల్ గా ఉంచడానికి
 function Navigation({ user, handleLogout }) {
   const location = useLocation();
-  const isDoctorPage = location.pathname.startsWith("/doctor");
+  // Doctor Dashboard లో ఉన్నప్పుడు క్లీన్ లుక్ కోసం నవ్ బార్ ని హైడ్ చేస్తున్నాం
+  const isDoctorPage = location.pathname.startsWith("/doctor-admin");
 
-  // Doctor Dashboard lo unnappudu cleaner look kosam Navbar hide chestunnam
   if (isDoctorPage) return null;
 
   return (
@@ -27,8 +27,8 @@ function Navigation({ user, handleLogout }) {
             Doctor Login
           </Link>
         ) : (
-          <button onClick={handleLogout} style={{ background: "none", border: "1px solid #ef4444", color: "#ef4444", padding: "4px 10px", borderRadius: "6px", cursor: "pointer", fontSize: "14px" }}>
-            Logout
+          <button onClick={handleLogout} style={{ background: "none", border: "1px solid #ef4444", color: "#ef4444", padding: "4px 10px", borderRadius: "6px", cursor: "pointer", fontSize: "14px", fontWeight: "bold" }}>
+            Logout (నిష్క్రమించు)
           </button>
         )}
       </div>
@@ -42,26 +42,44 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // 1. Check current session on load
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    // 1. App లోడ్ అవ్వగానే పాత సెషన్ ఉందో లేదో చూడు
+    const getInitialSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      setUser(session?.user ?? null);
+      setLoading(false);
+    };
+
+    getInitialSession();
+
+    // 2. లాగిన్ లేదా లాగౌట్ జరిగినప్పుడు వెంటనే యూజర్ స్టేట్ మార్చు
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
       setLoading(false);
     });
 
-    // 2. Listen for auth changes (login/logout)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
-
-    return () => subscription.unsubscribe();
+    return () => {
+      subscription?.unsubscribe();
+    };
   }, []);
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      console.error("Error logging out:", error.message);
+    } else {
+      setUser(null);
+      // Vercel లో సెషన్ క్లియర్ అవ్వడానికి హార్డ్ రీడైరెక్ట్ ఉత్తమం
+      window.location.href = "/login";
+    }
   };
 
-  if (loading) return <div style={{ textAlign: "center", marginTop: "50px" }}>Loading Setura...</div>;
+  // సెషన్ చెక్ చేసే వరకు లోడింగ్ స్క్రీన్
+  if (loading) return (
+    <div style={{ textAlign: "center", marginTop: "100px", fontFamily: "sans-serif" }}>
+      <h2 style={{ color: "#2563eb" }}>🏥 SETURA</h2>
+      <p>🛡️ సెక్యూర్డ్ కనెక్షన్... లోడ్ అవుతోంది!</p>
+    </div>
+  );
 
   return (
     <Router>
@@ -71,20 +89,20 @@ function App() {
 
         <div style={{ padding: "10px", maxWidth: "800px", margin: "0 auto" }}>
           <Routes>
-            {/* Public: Patient View */}
+            {/* Public: Patient Portal */}
             <Route path="/" element={<Hospitals />} />
 
-            {/* Public: Login Page (Redirect to dashboard if already logged in) */}
-            <Route path="/login" element={!user ? <Login setUser={setUser} /> : <Navigate to="/doctor-admin" />} />
+            {/* ఇప్పటికే లాగిన్ అయ్యుంటే లాగిన్ పేజీ నుంచి డాష్‌బోర్డ్ కి పంపిస్తుంది */}
+            <Route path="/login" element={!user ? <Login setUser={setUser} /> : <Navigate to="/doctor-admin" replace />} />
 
-            {/* Protected: Doctor Dashboard */}
+            {/* Protected: Doctor Dashboard (లాగిన్ అయితేనే కనిపిస్తుంది) */}
             <Route 
               path="/doctor-admin" 
-              element={user ? <Admin user={user} /> : <Navigate to="/login" />} 
+              element={user ? <Admin user={user} /> : <Navigate to="/login" replace />} 
             />
 
-            {/* 404 Page */}
-            <Route path="*" element={<div style={{ textAlign: "center", marginTop: "100px" }}><h2>404 - Not Found</h2><Link to="/">Go Home</Link></div>} />
+            {/* 404: వేరే ఏదైనా URL కొడితే హోమ్ కి వెళ్తుంది */}
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>
 

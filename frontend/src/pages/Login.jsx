@@ -20,10 +20,9 @@ export default function Login() {
 
       if (error) throw error;
 
-      // Login success aithe, user data ni session lo petti dashboard ki pampali
-      // Nuvvu andaru doctors ki common login kakunda, slug base login chesthe inka better
-      alert("✅ Login Successful!");
-      navigate("/"); // Leeda doctor specific route ki redirect chey
+      // SUCCESS: Doctor dashboard (Protected Route) ki pampali
+      // Manam App.jsx lo pettina route "/doctor-admin" kabatti ikkada adhe vaduthunnam
+      navigate("/doctor-admin");
       
     } catch (error) {
       alert("❌ Login Failed: " + error.message);
@@ -34,7 +33,7 @@ export default function Login() {
 
   const containerStyle = {
     maxWidth: "400px",
-    margin: "100px auto",
+    margin: "80px auto",
     padding: "30px",
     borderRadius: "16px",
     backgroundColor: "#ffffff",
@@ -52,7 +51,8 @@ export default function Login() {
     border: "1px solid #d1d5db",
     fontSize: "16px",
     boxSizing: "border-box",
-    outline: "none"
+    outline: "none",
+    color: "#000"
   };
 
   const buttonStyle = {
@@ -66,14 +66,15 @@ export default function Login() {
     fontSize: "16px",
     fontWeight: "bold",
     cursor: "pointer",
-    transition: "0.3s"
+    transition: "0.3s",
+    opacity: loading ? 0.7 : 1
   };
 
   return (
     <div style={containerStyle}>
       <div style={{ marginBottom: "20px" }}>
-        <h1 style={{ color: "#1e293b", margin: "0", fontSize: "28px" }}>🏥 SETURA</h1>
-        <p style={{ color: "#64748b", marginTop: "5px" }}>Staff & Doctor Portal</p>
+        <h1 style={{ color: "#1e293b", margin: "0", fontSize: "28px", fontWeight: "800" }}>🏥 SETURA</h1>
+        <p style={{ color: "#64748b", marginTop: "5px", fontWeight: "500" }}>Staff & Doctor Portal</p>
       </div>
 
       <form onSubmit={handleLogin}>
@@ -106,8 +107,9 @@ export default function Login() {
         </button>
       </form>
 
-      <div style={{ marginTop: "20px", fontSize: "12px", color: "#94a3b8" }}>
-        Narsapur Digital Healthcare | Admin Access Only
+      <div style={{ marginTop: "25px", fontSize: "12px", color: "#94a3b8", borderTop: "1px solid #f1f5f9", paddingTop: "15px" }}>
+        Narsapur Digital Healthcare Initiative<br/>
+        <b>Admin Access Only</b>
       </div>
     </div>
   );
