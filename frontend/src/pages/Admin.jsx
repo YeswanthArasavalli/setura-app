@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { supabase } from "../lib/supabaseClient";
 
 export default function Admin({ user }) {
@@ -6,8 +6,11 @@ export default function Admin({ user }) {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ total: 0, pending: 0 });
+  
+  // Use a ref to track the current hospital ID without triggering re-renders in useEffect
+  const hospitalIdRef = useRef(null);
 
-  // 1. Fetch Bookings Logic (Memoized to prevent unnecessary re-renders)
+  // 1. Fetch Bookings Logic (Memoized)
   const fetchBookings = useCallback(async (hId, currentToken) => {
     const { data: bookData, error } = await supabase
       .from("bookings")
@@ -25,11 +28,10 @@ export default function Admin({ user }) {
     }
   }, []);
 
-  // 2. Initial Data Load (Stronger Logic for Session Persistence)
+  // 2. Initial Data Load (Stronger Logic)
   const loadHospitalData = useCallback(async () => {
     if (!user?.id) return;
     
-    setLoading(true);
     try {
       const { data: hospData, error: hospError } = await supabase
         .from("hospitals")
@@ -40,6 +42,7 @@ export default function Admin({ user }) {
       if (hospError) throw hospError;
       
       setHospital(hospData);
+      hospitalIdRef.current = hospData.id; // Store ID for real-time check
       await fetchBookings(hospData.id, hospData.current_token);
     } catch (err) {
       console.error("Dashboard Load Error:", err.message);
@@ -48,35 +51,37 @@ export default function Admin({ user }) {
     }
   }, [user?.id, fetchBookings]);
 
+  // 3. Effect to load data and handle real-time
   useEffect(() => {
     loadHospitalData();
 
-    // 3. Real-time Subscription (Handling both Bookings and Hospital Status)
     const channel = supabase
-      .channel("admin-room")
+      .channel("admin-updates")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "bookings" }, (payload) => {
-        if (hospital && payload.new.hospital_id === hospital.id) {
-          fetchBookings(hospital.id, hospital.current_token);
-        } else {
-          loadHospitalData(); 
+        // Only refresh if new booking belongs to this hospital
+        if (payload.new.hospital_id === hospitalIdRef.current) {
+          loadHospitalData();
         }
       })
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "hospitals" }, (payload) => {
-        if (hospital && payload.new.id === hospital.id) {
+        if (payload.new.user_id === user?.id) {
           setHospital(payload.new);
         }
       })
       .subscribe();
 
-    return () => supabase.removeChannel(channel);
-  }, [loadHospitalData, hospital, fetchBookings]);
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id, loadHospitalData]);
 
-  // 4. Update Token Logic (Optimistic UI Update for Snappy Feel)
+  // 4. Update Token Logic (Optimistic UI)
   async function setCurrent(token) {
     if (!hospital) return;
 
     const oldToken = hospital.current_token;
-    // UI ni ventane update chesthunnam (Optimistic)
+    
+    // Immediate UI feedback
     setHospital(prev => ({ ...prev, current_token: token }));
     setStats(prev => ({ ...prev, pending: bookings.filter(b => b.token_number > token).length }));
 
@@ -86,8 +91,8 @@ export default function Admin({ user }) {
       .eq("id", hospital.id);
 
     if (error) {
-      // Failed aithe server state ki roll back chesthunnam
       console.error("Update failed:", error);
+      // Rollback on error
       setHospital(prev => ({ ...prev, current_token: oldToken }));
       fetchBookings(hospital.id, oldToken);
     }
@@ -116,7 +121,7 @@ export default function Admin({ user }) {
       {/* 📊 Analytics Dashboard */}
       <div style={{ display: "flex", gap: "15px", marginBottom: "25px" }}>
         <div style={{ flex: 1, backgroundColor: "#2563eb", color: "#fff", padding: "20px", borderRadius: "16px", textAlign: "center", boxShadow: "0 10px 15px -3px rgba(37, 99, 235, 0.3)" }}>
-          <small style={{ fontWeight: "600", fontSize: "11px", letterSpacing: "1px", textTransform: "uppercase", opacity: 0.9 }}>Total Patients</small>
+          <small style={{ fontWeight: "600", fontSize: "11px", letterSpacing: "1px", textTransform: "uppercase", opacity: 0.9 }}>Total Today</small>
           <h2 style={{ margin: "5px 0 0 0", fontSize: "32px", fontWeight: "800" }}>{stats.total}</h2>
         </div>
         <div style={{ flex: 1, backgroundColor: "#ef4444", color: "#fff", padding: "20px", borderRadius: "16px", textAlign: "center", boxShadow: "0 10px 15px -3px rgba(239, 68, 68, 0.3)" }}>
@@ -127,22 +132,21 @@ export default function Admin({ user }) {
 
       <header style={{ textAlign: "center", marginBottom: "30px", padding: "25px", backgroundColor: "#fff", borderRadius: "20px", border: "1px solid #e2e8f0", boxShadow: "0 4px 6px -1px rgba(0,0,0,0.05)" }}>
         <h2 style={{ margin: 0, color: "#1e293b", fontSize: "24px", fontWeight: "800" }}>{hospital.name}</h2>
-        <p style={{ color: "#64748b", margin: "5px 0 15px 0", fontSize: "14px", fontWeight: "500" }}>Digital Reception Control Panel</p>
-        <div style={{ display: "inline-block", backgroundColor: "#fffbeb", padding: "12px 30px", borderRadius: "50px", border: "2px solid #fde68a" }}>
+        <div style={{ marginTop: "15px", display: "inline-block", backgroundColor: "#fffbeb", padding: "12px 30px", borderRadius: "50px", border: "2px solid #fde68a" }}>
           <span style={{ fontSize: "14px", fontWeight: "bold", color: "#92400e" }}>NOW SERVING: </span>
-          <span style={{ fontSize: "28px", fontWeight: "900", color: "#92400e" }}>#{hospital.current_token || 0}</span>
+          <span style={{ fontSize: "28px", fontWeight: "900", color: "#dc2626" }}>#{hospital.current_token || 0}</span>
         </div>
       </header>
 
       {/* 📋 Patient List */}
-      {bookings.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "60px 20px", color: "#94a3b8", backgroundColor: "#fff", borderRadius: "20px", border: "2px dashed #e2e8f0" }}>
-          <span style={{ fontSize: "40px" }}>📭</span>
-          <p style={{ marginTop: "10px", fontWeight: "500" }}>No bookings yet for today.</p>
-        </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
-          {bookings.map((b) => {
+      <div style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
+        {bookings.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "60px 20px", color: "#94a3b8", backgroundColor: "#fff", borderRadius: "20px", border: "2px dashed #e2e8f0" }}>
+            <span style={{ fontSize: "40px" }}>📭</span>
+            <p style={{ marginTop: "10px", fontWeight: "500" }}>No bookings yet for today.</p>
+          </div>
+        ) : (
+          bookings.map((b) => {
             const isServing = b.token_number === hospital.current_token;
             const isCompleted = b.token_number < hospital.current_token;
 
@@ -157,7 +161,7 @@ export default function Admin({ user }) {
               }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <h4 style={{ margin: 0, fontSize: "18px", color: "#1e293b", fontWeight: "700" }}>
-                    {b.user_name} <span style={{ color: "#2563eb", fontWeight: "500", fontSize: "14px" }}>(Token #{b.token_number})</span>
+                    {b.user_name} <span style={{ color: "#2563eb", fontSize: "14px" }}>(Token #{b.token_number})</span>
                   </h4>
                   <a href={`tel:${b.phone_number}`} style={{ 
                     textDecoration: "none", backgroundColor: "#dcfce7", width: "40px", height: "40px", 
@@ -185,20 +189,20 @@ export default function Admin({ user }) {
                       fontSize: "14px"
                     }}
                   >
-                    CALL PATIENT NEXT
+                    CALL NEXT PATIENT
                   </button>
                 )}
                 
                 {isServing && (
                   <div style={{ textAlign: "center", color: "#15803d", fontWeight: "800", padding: "10px", backgroundColor: "#dcfce7", borderRadius: "10px", fontSize: "13px" }}>
-                    🟢 IN CONSULTATION
+                    🟢 CURRENTLY IN CONSULTATION
                   </div>
                 )}
               </div>
             );
-          })}
-        </div>
-      )}
+          })
+        )}
+      </div>
     </div>
   );
 }
